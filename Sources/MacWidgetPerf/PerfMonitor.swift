@@ -26,8 +26,8 @@ final class PerfMonitor: ObservableObject {
     @Published var currentDisk:    Double = 0  // bytes/sec
     @Published var currentNetDown: Double = 0  // bytes/sec
 
-    // Learned peaks for auto-scaling
-    @Published var diskPeak:    Double = 1
+    // Learned peaks for auto-scaling (bytes/sec)
+    @Published var diskPeak:    Double = 10_000_000             // learned max (bytes/sec)
     @Published var netDownPeak: Double = NetworkMaxStore.floor  // learned max (bytes/sec)
 
     // Top process over the rolling window
@@ -49,6 +49,11 @@ final class PerfMonitor: ObservableObject {
     // Disk state
     private var prevDiskRead:  UInt64 = 0
     private var prevDiskWrite: UInt64 = 0
+    private let diskFloor:         Double = 10_000_000   // 10 MB/s minimum scale
+    private var diskSmoothed:      Double = 0
+    private var diskMax:           Double = 10_000_000
+    private let diskAlpha:         Double = 0.4
+    private let diskDecayPerTick:  Double = 0.9995
 
     // Network state — per-interface byte counters, EMA smoother, and learned max store
     private var prevIfBytes:     [String: (rx: UInt64, tx: UInt64)] = [:]
@@ -109,7 +114,7 @@ final class PerfMonitor: ObservableObject {
 
     private func tick() {
         let cpu                            = sampleCpu()
-        let disk                           = sampleDisk()
+        let (disk, diskNorm, diskEffMax)   = sampleDisk()
         let (netDown, netNorm, netMax)     = sampleNetwork()
         let top                            = processCpuMonitor.topProcess(windowSeconds: historySeconds)
 
@@ -121,11 +126,11 @@ final class PerfMonitor: ObservableObject {
             topProcessName    = top?.name
             topProcessPercent = top?.percent ?? 0
 
-            diskPeak    = max(diskSamples.max() ?? 1, max(disk, 1))
+            diskPeak    = diskEffMax
             netDownPeak = netMax
 
             append(to: &cpuSamples,     value: cpu / 100.0)
-            append(to: &diskSamples,    value: disk / diskPeak)
+            append(to: &diskSamples,    value: diskNorm)
             append(to: &netDownSamples, value: netNorm)
         }
     }
@@ -220,12 +225,24 @@ final class PerfMonitor: ObservableObject {
         prevDiskRead = r; prevDiskWrite = w
     }
 
-    private func sampleDisk() -> Double {
+    /// Returns (rawRate, normalizedSmoothed, effectiveMax).
+    /// rawRate           — bytes/sec for the legend label
+    /// normalizedSmoothed — EMA-smoothed rate / learned max, clamped 0..1, for the chart
+    /// effectiveMax      — learned max (bytes/sec) to publish as diskPeak
+    private func sampleDisk() -> (Double, Double, Double) {
         let (r, w) = readDiskBytes()
         let dRead  = r >= prevDiskRead  ? r - prevDiskRead  : 0
         let dWrite = w >= prevDiskWrite ? w - prevDiskWrite : 0
         prevDiskRead = r; prevDiskWrite = w
-        return Double(dRead + dWrite) / sampleInterval
+        let rawRate = Double(dRead + dWrite) / sampleInterval
+
+        diskSmoothed = diskSmoothed * (1 - diskAlpha) + rawRate * diskAlpha
+
+        diskMax *= diskDecayPerTick
+        if diskSmoothed > diskMax { diskMax = diskSmoothed }
+
+        let effectiveMax = max(diskMax, diskFloor)
+        return (rawRate, min(1, diskSmoothed / effectiveMax), effectiveMax)
     }
 
     // MARK: - Network (getifaddrs) — Windows-style rolling learned max
