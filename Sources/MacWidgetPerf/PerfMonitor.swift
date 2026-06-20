@@ -28,7 +28,7 @@ final class PerfMonitor: ObservableObject {
 
     // Learned peaks for auto-scaling
     @Published var diskPeak:    Double = 1
-    @Published var netDownPeak: Double = 1
+    @Published var netDownPeak: Double = NetworkMaxStore.floor  // learned max (bytes/sec)
 
     // Top process over the rolling window
     @Published var topProcessName:    String? = nil
@@ -50,9 +50,16 @@ final class PerfMonitor: ObservableObject {
     private var prevDiskRead:  UInt64 = 0
     private var prevDiskWrite: UInt64 = 0
 
-    // Network state
-    private var prevBytesIn:  UInt64 = 0
-    private var prevBytesOut: UInt64 = 0
+    // Network state — per-interface byte counters, EMA smoother, and learned max store
+    private var prevIfBytes:     [String: (rx: UInt64, tx: UInt64)] = [:]
+    private var netSmoothed:     Double = 0
+    private var netActiveKey:    String = ""
+    private var netMaxStore:     [String: NetworkConnectionStat] = [:]
+    private var netDirty:        Bool   = false
+    private var netLastSave:     Date   = Date()
+    private let netAlpha:        Double = 0.4       // EMA weight toward newest sample
+    private let netDecayPerTick: Double = 0.9995    // slow relaxation of the learned max
+    private let netSaveInterval: Double = 15        // seconds between store flushes
 
     // MARK: - Configuration
 
@@ -101,10 +108,10 @@ final class PerfMonitor: ObservableObject {
     // MARK: - Tick
 
     private func tick() {
-        let cpu     = sampleCpu()
-        let disk    = sampleDisk()
-        let netDown = sampleNetwork()
-        let top     = processCpuMonitor.topProcess(windowSeconds: historySeconds)
+        let cpu                            = sampleCpu()
+        let disk                           = sampleDisk()
+        let (netDown, netNorm, netMax)     = sampleNetwork()
+        let top                            = processCpuMonitor.topProcess(windowSeconds: historySeconds)
 
         DispatchQueue.main.async { [self] in
             currentCpu     = cpu
@@ -115,11 +122,11 @@ final class PerfMonitor: ObservableObject {
             topProcessPercent = top?.percent ?? 0
 
             diskPeak    = max(diskSamples.max() ?? 1, max(disk, 1))
-            netDownPeak = max(netDownSamples.max() ?? 1, max(netDown, 1))
+            netDownPeak = netMax
 
             append(to: &cpuSamples,     value: cpu / 100.0)
             append(to: &diskSamples,    value: disk / diskPeak)
-            append(to: &netDownSamples, value: netDown / netDownPeak)
+            append(to: &netDownSamples, value: netNorm)
         }
     }
 
@@ -221,38 +228,99 @@ final class PerfMonitor: ObservableObject {
         return Double(dRead + dWrite) / sampleInterval
     }
 
-    // MARK: - Network (getifaddrs)
+    // MARK: - Network (getifaddrs) — Windows-style rolling learned max
 
-    private func totalNetBytes() -> (UInt64, UInt64) {
-        var bytesIn: UInt64 = 0, bytesOut: UInt64 = 0
+    private func readIfBytes() -> [String: (rx: UInt64, tx: UInt64)] {
+        var result: [String: (rx: UInt64, tx: UInt64)] = [:]
         var ifaddr: UnsafeMutablePointer<ifaddrs>?
-        guard getifaddrs(&ifaddr) == 0 else { return (0, 0) }
+        guard getifaddrs(&ifaddr) == 0 else { return result }
         defer { freeifaddrs(ifaddr) }
         var ptr = ifaddr
         while let cur = ptr {
             let ifa  = cur.pointee
             let name = String(cString: ifa.ifa_name)
             if ifa.ifa_addr.pointee.sa_family == UInt8(AF_LINK),
-               !name.hasPrefix("lo"),
+               isNetCandidate(name),
                let data = ifa.ifa_data {
                 let stats = data.assumingMemoryBound(to: if_data.self).pointee
-                bytesIn  += UInt64(stats.ifi_ibytes)
-                bytesOut += UInt64(stats.ifi_obytes)
+                result[name] = (rx: UInt64(stats.ifi_ibytes), tx: UInt64(stats.ifi_obytes))
             }
             ptr = ifa.ifa_next
         }
-        return (bytesIn, bytesOut)
+        return result
+    }
+
+    // Exclude loopback and virtual/tunnel interfaces; keep physical en*, pdp_ip*, etc.
+    private func isNetCandidate(_ name: String) -> Bool {
+        let excluded = ["lo", "utun", "gif", "stf", "ppp", "vmnet", "bridge", "llw", "awdl", "p2p"]
+        return !excluded.contains(where: { name.hasPrefix($0) })
     }
 
     private func primeNetwork() {
-        let (i, o) = totalNetBytes()
-        prevBytesIn = i; prevBytesOut = o
+        netMaxStore = NetworkMaxStore.load()
+        prevIfBytes = readIfBytes()
     }
 
-    private func sampleNetwork() -> Double {
-        let (curIn, _) = totalNetBytes()
-        let dlRate = curIn >= prevBytesIn ? Double(curIn - prevBytesIn) / sampleInterval : 0
-        prevBytesIn = curIn
-        return dlRate
+    /// Returns (rawRate, normalizedSmoothed, effectiveMax).
+    /// rawRate      — bytes/sec for the legend label
+    /// normalizedSmoothed — EMA-smoothed rate / learned max, clamped 0..1, for the chart
+    /// effectiveMax — learned max (bytes/sec) to publish as netDownPeak
+    private func sampleNetwork() -> (Double, Double, Double) {
+        let current = readIfBytes()
+        let now     = Date()
+
+        // Pick the busiest non-loopback interface by max(rx, tx) delta.
+        var bestKey   = ""
+        var bestRate  = 0.0   // max(rx, tx) on the winner
+        var bestSum   = -1.0  // rx+tx sum used for selection
+
+        for (name, cur) in current {
+            guard let prev = prevIfBytes[name] else { continue }
+            let rxRate = cur.rx >= prev.rx ? Double(cur.rx - prev.rx) / sampleInterval : 0
+            let txRate = cur.tx >= prev.tx ? Double(cur.tx - prev.tx) / sampleInterval : 0
+            let sum    = rxRate + txRate
+            if sum > bestSum {
+                bestSum  = sum
+                bestKey  = name
+                bestRate = max(rxRate, txRate)
+            }
+        }
+
+        prevIfBytes = current
+
+        guard !bestKey.isEmpty else {
+            netSmoothed = 0
+            return (0, 0, NetworkMaxStore.floor)
+        }
+
+        // EMA — reset smoothing on interface switch.
+        if bestKey != netActiveKey {
+            netActiveKey = bestKey
+            netSmoothed  = bestRate
+        } else {
+            netSmoothed = netSmoothed * (1 - netAlpha) + bestRate * netAlpha
+        }
+
+        // Retrieve (or create) the learned max for this interface.
+        var stat = netMaxStore[bestKey] ?? NetworkConnectionStat(
+            maxBytesPerSec: NetworkMaxStore.floor, label: bestKey)
+
+        // Slow decay so a one-off spike doesn't pin the scale forever.
+        stat.maxBytesPerSec *= netDecayPerTick
+        if netSmoothed > stat.maxBytesPerSec {
+            stat.maxBytesPerSec = netSmoothed
+            netDirty = true
+        }
+        netMaxStore[bestKey] = stat
+
+        // Flush periodically.
+        if netDirty && now.timeIntervalSince(netLastSave) >= netSaveInterval {
+            NetworkMaxStore.save(netMaxStore)
+            netDirty    = false
+            netLastSave = now
+        }
+
+        let effectiveMax = max(stat.maxBytesPerSec, NetworkMaxStore.floor)
+        return (bestRate, min(1, netSmoothed / effectiveMax), effectiveMax)
     }
 }

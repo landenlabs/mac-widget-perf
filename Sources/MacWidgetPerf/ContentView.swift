@@ -51,21 +51,21 @@ struct ContentView: View {
                     .foregroundColor(config.cpuColor.color)
                     .lineLimit(1)
                     .truncationMode(.tail)
-                Text(String(format: "%.0f%%", monitor.topProcessPercent))
+                Text(String(format: "%.0f%%", min(999, monitor.topProcessPercent)))
                     .font(.system(size: 9, design: .monospaced))
                     .foregroundColor(config.cpuColor.color.opacity(0.7))
             } else {
                 Image(systemName: "chart.bar.fill")
                     .font(.system(size: 9, weight: .semibold))
-                    .foregroundColor(.secondary.opacity(0.6))
+                    .foregroundColor(.white.opacity(0.5))
                 Text("Performance")
                     .font(.system(size: 10, weight: .medium, design: .rounded))
-                    .foregroundColor(.secondary.opacity(0.7))
+                    .foregroundColor(.white.opacity(0.6))
             }
             Spacer()
             Text(formatDuration(config.historySeconds))
                 .font(.system(size: 8))
-                .foregroundColor(.secondary.opacity(0.4))
+                .foregroundColor(.white.opacity(0.35))
         }
         .frame(height: WidgetConfig.headerHeight)
     }

@@ -99,10 +99,13 @@ final class ProcessCpuMonitor {
         guard let earliest, !agg.isEmpty else { return nil }
 
         let spanSec = max(1.0, Date().timeIntervalSince(earliest))
-        let totalCapacityNs = spanSec * coreCount * 1_000_000_000
+        // Normalize as "% of one logical core" (Activity Monitor style).
+        // A single-threaded process pegged to 100% of one core shows as 100%;
+        // a 4-thread process pegged to four cores shows as ~400%.
+        let oneCoreTotalNs = spanSec * 1_000_000_000
         guard let top = agg.max(by: { $0.value < $1.value }) else { return nil }
-        let pct = min(100.0, top.value / totalCapacityNs * 100.0)
-        guard pct >= 0.5 else { return nil }
+        let pct = top.value / oneCoreTotalNs * 100.0
+        guard pct >= 0.1 else { return nil }
         return (name: top.key, percent: pct)
     }
 
