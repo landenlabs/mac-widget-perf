@@ -25,6 +25,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.syncManagers(to: configs)
             }
             .store(in: &cancellables)
+
+        LoginItem.syncWithStoredPreference()
     }
 
     private func setupWidgets() {
@@ -132,6 +134,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         openWindow(width: 480, height: 540, title: "About Performance Widget",
                    rootView: AboutView(), controller: &aboutWindowController)
     }
+
+    @objc private func toggleLaunchAtLogin() {
+        LoginItem.set(enabled: !LoginItem.isEnabled)
+    }
 }
 
 // MARK: - NSMenuDelegate
@@ -174,6 +180,15 @@ extension AppDelegate: NSMenuDelegate {
         }
 
         menu.addItem(item("About…", action: #selector(openAbout)))
+        menu.addItem(.separator())
+
+        let loginItem = NSMenuItem(title: "Launch at Login",
+                                   action: #selector(toggleLaunchAtLogin),
+                                   keyEquivalent: "")
+        loginItem.state  = LoginItem.isEnabled ? .on : .off
+        loginItem.target = self
+        menu.addItem(loginItem)
+
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
 

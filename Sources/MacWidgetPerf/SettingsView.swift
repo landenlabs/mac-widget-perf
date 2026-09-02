@@ -87,9 +87,23 @@ struct SettingsView: View {
                     Slider(value: cfg.backgroundOpacity, in: 0...0.7, step: 0.05)
                 }
             }
+
+            // ── System ────────────────────────────────────────────────────
+            Section("System") {
+                Toggle("Launch at login", isOn: launchAtLoginBinding)
+            }
         }
         .formStyle(.grouped)
         .frame(minWidth: 320, minHeight: 480)
+    }
+
+    // MARK: - Login item helpers
+
+    private var launchAtLoginBinding: Binding<Bool> {
+        Binding(
+            get: { LoginItem.isEnabled },
+            set: { enabled in LoginItem.set(enabled: enabled) }
+        )
     }
 
     // MARK: - Helpers
