@@ -9,7 +9,10 @@ let package = Package(
             name: "MacWidgetPerf",
             path: "Sources/MacWidgetPerf",
             resources: [.process("Resources")],
-            linkerSettings: [.linkedFramework("IOKit")]
+            linkerSettings: [
+                .linkedFramework("IOKit"),
+                .linkedFramework("ServiceManagement"),
+            ]
         )
     ]
 )

@@ -58,7 +58,7 @@ A lightweight, transparent **System Performance desktop widget** for macOS. Disp
 - **Resizable graph** — width 160–600 pt, height 40–240 pt via sliders
 - **Grid lines** — optional horizontal reference lines
 - **Adjustable background opacity** — 0–70 % semi-transparent backing panel
-- **Launch at Login** — optional macOS login item via System Events
+- **Launch at Login** — optional macOS login item via `SMAppService`
 
 ---
 
@@ -76,15 +76,12 @@ A lightweight, transparent **System Performance desktop widget** for macOS. Disp
 ```bash
 git clone https://github.com/landenlabs/mac-widget-perf.git
 cd mac-widget-perf
-swift build -c release
+./build_app.sh
 ```
 
-The built binary is at:
-```
-.build/release/MacWidgetPerf
-```
+This builds a release binary, packages it as `MacWidgetPerf.app`, and installs it to `/Applications`. A proper `.app` bundle is required for **Launch at Login** to work — macOS can only silently relaunch bundled apps at login, not bare executables.
 
-Run it directly or copy it to `/Applications` or any location in your `PATH`.
+To build without installing, run `swift build -c release` directly; the binary will be at `.build/release/MacWidgetPerf`, but it won't support Launch at Login.
 
 ---
 

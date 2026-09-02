@@ -25,8 +25,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.syncManagers(to: configs)
             }
             .store(in: &cancellables)
-
-        LoginItem.syncWithStoredPreference()
     }
 
     private func setupWidgets() {
