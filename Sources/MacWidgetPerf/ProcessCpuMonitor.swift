@@ -59,7 +59,7 @@ final class ProcessCpuMonitor {
     private var timer:     Timer?
     private let coreCount: Double
 
-    private static let maxWindowSeconds = 600.0
+    private static let maxWindowSeconds = 120.0
 
     init() {
         coreCount = Double(ProcessInfo.processInfo.processorCount)
@@ -105,7 +105,7 @@ final class ProcessCpuMonitor {
         let oneCoreTotalNs = spanSec * 1_000_000_000
         guard let top = agg.max(by: { $0.value < $1.value }) else { return nil }
         let pct = top.value / oneCoreTotalNs * 100.0
-        guard pct >= 0.1 else { return nil }
+        guard pct >= 5.0 else { return nil }
         return (name: top.key, percent: pct)
     }
 
