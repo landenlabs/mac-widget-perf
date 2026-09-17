@@ -4,6 +4,8 @@
 <dict>
     <key>CFBundleExecutable</key>
     <string>MacWidgetPerf</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>CFBundleIdentifier</key>
     <string>com.landenlabs.macwidgetperf</string>
     <key>CFBundleName</key>

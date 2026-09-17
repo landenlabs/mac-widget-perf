@@ -29,6 +29,8 @@ if [ -d "$RESOURCE_BUNDLE" ]; then
     cp -R "$RESOURCE_BUNDLE" "$APP_BUNDLE/Contents/Resources/"
 fi
 
+cp "Packaging/AppIcon.icns" "$APP_BUNDLE/Contents/Resources/AppIcon.icns"
+
 sed "s/__VERSION__/$VERSION/g" Packaging/Info.plist > "$APP_BUNDLE/Contents/Info.plist"
 
 codesign --force --deep --sign - "$APP_BUNDLE"
