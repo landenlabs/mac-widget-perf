@@ -91,6 +91,11 @@ struct SettingsView: View {
             // ── System ────────────────────────────────────────────────────
             Section("System") {
                 Toggle("Launch at login", isOn: launchAtLoginBinding)
+                    .disabled(!LoginItem.isRunningFromAppBundle)
+                if !LoginItem.isRunningFromAppBundle {
+                    Text("Only available when running the installed app from /Applications.")
+                        .font(.caption).foregroundColor(.secondary)
+                }
             }
         }
         .formStyle(.grouped)

@@ -14,7 +14,24 @@ enum LoginItem {
         SMAppService.mainApp.status == .enabled
     }
 
+    /// True when the running binary is inside a real `.app` bundle (e.g.
+    /// `/Applications/MacWidgetPerf.app/Contents/MacOS/MacWidgetPerf`), as
+    /// opposed to a bare SwiftPM binary under `.build/`. SMAppService will
+    /// happily "register" a bare binary too, but launchd then has nothing
+    /// bundle-like to relaunch at login, so it falls back to running the
+    /// executable attached to a foreground Terminal-style session that
+    /// never closes. Gating registration here stops that bad state from
+    /// being created again; see `build_app.sh`/`run.sh` for the two ways
+    /// this binary gets launched.
+    static var isRunningFromAppBundle: Bool {
+        Bundle.main.bundleURL.pathExtension == "app"
+    }
+
     static func set(enabled: Bool) {
+        if enabled && !isRunningFromAppBundle {
+            NSLog("MacWidgetPerf: refusing to register login item — not running from an installed .app bundle (build_app.sh). Run the app from /Applications instead.")
+            return
+        }
         do {
             if enabled {
                 if SMAppService.mainApp.status != .enabled {
