@@ -59,6 +59,13 @@ final class WidgetWindowManager: NSObject {
         win.orderFront(nil)
         self.window = win
 
+        // Move to the position remembered for the new display arrangement when
+        // screens are added/removed (also fires as externals attach after login/wake).
+        NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)
+            .debounce(for: .seconds(1), scheduler: DispatchQueue.main)
+            .sink { [weak self] _ in self?.updatePosition() }
+            .store(in: &cancellables)
+
         // Resize when graph dimensions change
         appSettings.$configs
             .compactMap { [weak self] cfgs in cfgs.first(where: { $0.id == self?.configId }) }
@@ -95,6 +102,12 @@ final class WidgetWindowManager: NSObject {
     private func rebuildContent(win: NSWindow) {
         let root = ContentView(monitor: monitor, appSettings: appSettings, configId: configId)
         win.contentViewController = NSHostingController(rootView: root)
+    }
+
+    func updatePosition() {
+        guard let win = window, !isDragging else { return }
+        let cfg = config
+        win.setFrameOrigin(NSPoint(x: cfg.effectiveX, y: cfg.effectiveY))
     }
 
     // MARK: - Drag Mode
